@@ -1,1 +1,0 @@
-# my-nft-mystic-effects-plugin-pack
