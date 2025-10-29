@@ -189,6 +189,11 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
 
             // Convert the rendered canvas to a layer and composite it onto the main canvas
             const renderedLayer = await renderCanvas.convertToLayer();
+            
+            // Apply layer opacity before compositing
+            const layerOpacity = this.config.layerOpacity || 1.0;
+            await renderedLayer.adjustLayerOpacity(layerOpacity);
+            
             await layer.compositeLayerOver(renderedLayer);
 
             console.log('✅ Animated Tree of Life effect rendered successfully');
@@ -1147,44 +1152,225 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
             const animation = this.mysticSymbolsEngine.getPhaseAnimation(phase, progress, node.id);
             const colorShift = this.mysticSymbolsEngine.getColorShift(phase, progress, node.id);
             
-            // Calculate symbol position with phase-based offsets
+            // Calculate symbol size and position
             const symbolRadius = (this.config.nodeSize || 20) * animation.scale;
             const symbolX = x;
             const symbolY = y;
-            
-            // Draw symbol with glow
             const symbolGlowSize = this.config.symbolGlowSize || 8;
+            
+            // Invert the node color for symbol contrast
+            const invertedColor = this.#invertColor(node.color);
+            
+            // Draw symbol glow layer
             await canvas.drawRing2d(
                 {x: symbolX, y: symbolY},
                 symbolRadius + symbolGlowSize,
                 2,
-                colorShift.glowColor,
+                invertedColor,
                 0,
                 null,
-                animation.opacity * animation.glowIntensity
+                animation.opacity * animation.glowIntensity * 0.5
             );
             
-            // Draw symbol core (represented as a glowing circle with inner details)
-            await canvas.drawFilledPolygon2d(
-                symbolRadius * 0.8,
-                {x: symbolX, y: symbolY},
-                16,
-                animation.rotation,
-                colorShift.baseColor,
-                animation.opacity * 0.9
-            );
-            
-            // Draw symbol inner accent
-            await canvas.drawFilledPolygon2d(
-                symbolRadius * 0.4,
-                {x: symbolX, y: symbolY},
-                12,
-                animation.rotation * 1.5,
-                colorShift.glowColor,
-                animation.opacity * 0.6
-            );
+            // Render each path element in the symbol definition
+            if (symbol.paths && Array.isArray(symbol.paths)) {
+                for (const pathElement of symbol.paths) {
+                    await this.#renderSymbolPath(
+                        canvas,
+                        pathElement,
+                        symbolX,
+                        symbolY,
+                        symbolRadius,
+                        animation,
+                        { baseColor: invertedColor, glowColor: invertedColor }
+                    );
+                }
+            }
         } catch (error) {
             console.warn('Warning rendering mystic symbol for node', node.id, ':', error.message);
+        }
+    }
+
+    /**
+     * Render a single path element from a symbol definition
+     * Transforms normalized coordinates (0-1) to canvas space and applies animations
+     * @private
+     */
+    async #renderSymbolPath(canvas, pathElement, centerX, centerY, radius, animation, colorShift) {
+        try {
+            // Helper: Transform normalized coordinates to canvas space
+            const transform = (nx, ny) => {
+                const rotX = nx * 2 - 1; // Convert 0-1 to -1 to 1
+                const rotY = ny * 2 - 1;
+                
+                // Apply rotation
+                const cos = Math.cos(animation.rotation);
+                const sin = Math.sin(animation.rotation);
+                const rotatedX = rotX * cos - rotY * sin;
+                const rotatedY = rotX * sin + rotY * cos;
+                
+                // Convert to canvas coordinates (scaled and centered)
+                return {
+                    x: centerX + rotatedX * radius * animation.scale,
+                    y: centerY + rotatedY * radius * animation.scale
+                };
+            };
+
+            const opacity = animation.opacity * 0.8;
+            const color = colorShift.baseColor;
+            const lineWidth = 1.5;
+            const outerStroke = 0.5;
+
+            switch (pathElement.type) {
+                case 'circle':
+                    // Draw filled circle using high-resolution polygon (64 sides = smooth circle)
+                    // For centered circles, use centerX/centerY directly (normalized coordinates 0.5, 0.5)
+                    const circleRadius = pathElement.radius * radius * animation.scale;
+                    await canvas.drawFilledPolygon2d(
+                        circleRadius,
+                        {x: centerX, y: centerY},
+                        64,  // 64-sided polygon = smooth circle
+                        0,   // start angle
+                        color,
+                        opacity
+                    );
+                    break;
+
+                case 'polygon':
+                    // Draw polygon from array of [x, y] pairs by connecting lines
+                    if (pathElement.points && pathElement.points.length > 1) {
+                        for (let i = 0; i < pathElement.points.length; i++) {
+                            const p1 = transform(pathElement.points[i][0], pathElement.points[i][1]);
+                            const p2 = transform(
+                                pathElement.points[(i + 1) % pathElement.points.length][0],
+                                pathElement.points[(i + 1) % pathElement.points.length][1]
+                            );
+                            await canvas.drawLine2d(
+                                p1,
+                                p2,
+                                lineWidth,
+                                color,
+                                outerStroke,
+                                color,
+                                opacity
+                            );
+                        }
+                    }
+                    break;
+
+                case 'path':
+                    // Draw connected path from array of [x, y] pairs
+                    if (pathElement.points && pathElement.points.length > 1) {
+                        for (let i = 0; i < pathElement.points.length - 1; i++) {
+                            const p1 = transform(pathElement.points[i][0], pathElement.points[i][1]);
+                            const p2 = transform(pathElement.points[i + 1][0], pathElement.points[i + 1][1]);
+                            await canvas.drawLine2d(
+                                p1,
+                                p2,
+                                lineWidth,
+                                color,
+                                outerStroke,
+                                color,
+                                opacity
+                            );
+                        }
+                    }
+                    break;
+
+                case 'line':
+                    // Draw straight line
+                    const p1 = transform(pathElement.x1, pathElement.y1);
+                    const p2 = transform(pathElement.x2, pathElement.y2);
+                    await canvas.drawLine2d(
+                        p1,
+                        p2,
+                        lineWidth,
+                        color,
+                        outerStroke,
+                        color,
+                        opacity
+                    );
+                    break;
+
+                case 'arc':
+                    // Draw arc/circle outline as a ring (centered)
+                    const arcRadius = pathElement.r * radius * animation.scale;
+                    await canvas.drawRing2d(
+                        {x: centerX, y: centerY},
+                        arcRadius,
+                        lineWidth,
+                        color,
+                        outerStroke,
+                        color,
+                        opacity
+                    );
+                    break;
+
+                case 'rect':
+                    // Draw rectangle using connected lines
+                    const x = centerX + (pathElement.x - 0.5) * radius * 2 * animation.scale;
+                    const y = centerY + (pathElement.y - 0.5) * radius * 2 * animation.scale;
+                    const w = pathElement.width * radius * animation.scale;
+                    const h = pathElement.height * radius * animation.scale;
+                    
+                    const corners = [
+                        {x: x - w/2, y: y - h/2},
+                        {x: x + w/2, y: y - h/2},
+                        {x: x + w/2, y: y + h/2},
+                        {x: x - w/2, y: y + h/2}
+                    ];
+                    
+                    for (let i = 0; i < corners.length; i++) {
+                        await canvas.drawLine2d(
+                            corners[i],
+                            corners[(i + 1) % corners.length],
+                            lineWidth,
+                            color,
+                            outerStroke,
+                            color,
+                            opacity
+                        );
+                    }
+                    break;
+
+                default:
+                    // Unsupported path type, skip silently
+                    break;
+            }
+        } catch (error) {
+            console.warn('Error rendering symbol path element:', error.message);
+        }
+    }
+
+    /**
+     * Invert a hex color for contrast
+     * Converts #RRGGBB to inverted complementary color
+     * @private
+     */
+    #invertColor(hexColor) {
+        try {
+            // Remove '#' if present
+            let hex = hexColor.replace('#', '');
+            
+            // Pad with zeros if needed
+            if (hex.length === 3) {
+                hex = hex.split('').map(c => c + c).join('');
+            }
+            
+            // Parse RGB components
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            
+            // Invert each channel
+            const invR = (255 - r).toString(16).padStart(2, '0');
+            const invG = (255 - g).toString(16).padStart(2, '0');
+            const invB = (255 - b).toString(16).padStart(2, '0');
+            
+            return `#${invR}${invG}${invB}`.toUpperCase();
+        } catch (error) {
+            // Fallback to white if inversion fails
+            return '#FFFFFF';
         }
     }
 }
