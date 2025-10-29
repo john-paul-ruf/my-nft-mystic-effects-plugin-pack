@@ -129,8 +129,7 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
      * Uses "invoke" method name as expected by my-nft-gen LayerEffect
      */
     async invoke(layer, currentFrame, numberOfFrames) {
-        // Call parent's invoke first to set up the layer properly
-        await super.invoke();
+
 
         try {
             // **CRITICAL**: Update frame tracking with the current render context
@@ -206,6 +205,9 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
             console.error('Error invoking Animated Tree of Life effect:', error);
             throw error;
         }
+
+        // Call parent's invoke first to set up the layer properly
+        await super.invoke(layer, currentFrame, numberOfFrames);
     }
 
     /**
