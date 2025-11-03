@@ -11,5 +11,14 @@
 import { AnimatedKabbalisticTreeKeyFrameEffect } from './AnimatedTreeOfLife/AnimatedKabbalisticTreeKeyFrameEffect.js';
 import { AnimatedTreeOfLifeConfig } from './AnimatedTreeOfLife/AnimatedTreeOfLifeConfig.js';
 
+// Chakra Mandala Effect
+import { ChakraMandalaEffect } from './ChakraMandala/ChakraMandalaEffect.js';
+import { ChakraMandalaConfig } from './ChakraMandala/ChakraMandalaConfig.js';
+
 // Export all primary effects
-export { AnimatedKabbalisticTreeKeyFrameEffect, AnimatedTreeOfLifeConfig };
+export {
+  AnimatedKabbalisticTreeKeyFrameEffect,
+  AnimatedTreeOfLifeConfig,
+  ChakraMandalaEffect,
+  ChakraMandalaConfig,
+};

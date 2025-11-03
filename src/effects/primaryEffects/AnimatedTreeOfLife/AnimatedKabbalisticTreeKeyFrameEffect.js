@@ -1,41 +1,49 @@
 /**
- * Animated Kabbalistic Tree Key Frame Effect
+ * Animated Kabbalistic Tree of Life Effect
  *
- * Animates the Tree of Life symbol through 4 phases:
+ * **REFACTORED v2.0** - Now uses PhaseAnimatedPolygonEffect base class
+ * Eliminates 600+ lines of redundant code through inheritance
+ *
+ * Animates the Tree of Life symbol through 4 phases with smooth transitions:
  * 1. Awakening (0-20%): Energy rises from Malkuth
  * 2. Ascension (20-60%): Paths trace upward
  * 3. Radiance (60-85%): Full network glowing
  * 4. Descent (85-100%): Energy returns to Malkuth (seamless loop)
+ *
+ * Includes:
+ * - 10 Sephiroth nodes + 22 sacred paths (sacred geometry)
+ * - 7 energy pulse systems (waves, breathing, spirals, etc.)
+ * - 10 mystic symbols with per-phase animation
+ * - Smooth cross-phase transitions (from v2.1)
+ * - Hardware-accelerated rendering via Canvas2dFactory
  */
 
-import {LayerEffect} from 'my-nft-gen/src/core/layer/LayerEffect.js';
 import {Settings} from 'my-nft-gen/src/core/Settings.js';
-import {Canvas2dFactory} from 'my-nft-gen/src/core/factory/canvas/Canvas2dFactory.js';
-import {AnimationPhaseEngine} from './AnimationPhaseEngine.js';
+import {PhaseAnimatedPolygonEffect} from '../../base/PhaseAnimatedPolygonEffect.js';
 import {AnimatedTreeOfLifeConfig} from './AnimatedTreeOfLifeConfig.js';
 import {SEPHIROTH_POSITIONS, PATHS_CONNECTIONS} from './SephirothGeometry.js';
 import {EnergyPulseEngine} from './EnergyPulseEngine.js';
 import {MysticSymbolsEngine} from './MysticSymbolsEngine.js';
 import {DetailedGeometryEngine} from './DetailedGeometryEngine.js';
 
-export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
+export class AnimatedKabbalisticTreeKeyFrameEffect extends PhaseAnimatedPolygonEffect {
     static _name_ = 'animated-tree-of-life';
     static _displayName_ = 'Animated Tree of Life';
     static _description_ = 'Animates the Tree of Life symbol through mystical phases with energy flow and sacred geometry';
-    static _version_ = '1.0.0';
+    static _version_ = '2.0.0'; // v2.0 = Refactored with base class
     static _author_ = 'Operator';
     static _tags_ = ['effect', 'primary', 'tree', 'animation', 'sacred-geometry', 'keyframe', 'animated'];
 
     constructor({
-                    name = AnimatedKabbalisticTreeKeyFrameEffect._name_,
-                    requiresLayer = true,
-                    config = new AnimatedTreeOfLifeConfig({}),
-                    additionalEffects = [],
-                    ignoreAdditionalEffects = false,
-                    settings = new Settings({}),
-                    frameNumber = 0,
-                    totalFrames = 1,
-                } = {}) {
+        name = AnimatedKabbalisticTreeKeyFrameEffect._name_,
+        requiresLayer = true,
+        config = new AnimatedTreeOfLifeConfig({}),
+        additionalEffects = [],
+        ignoreAdditionalEffects = false,
+        settings = new Settings({}),
+        frameNumber = 0,
+        totalFrames = 1,
+    } = {}) {
         super({
             name,
             requiresLayer,
@@ -43,175 +51,143 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
             additionalEffects,
             ignoreAdditionalEffects,
             settings,
+            frameNumber,
+            totalFrames,
         });
 
-        this.frameNumber = frameNumber;
-        this.totalFrames = totalFrames;
+        // Initialize Tree of Life-specific engines (can be null for worker thread safety)
+        try {
+            this.energyPulseEngine = new EnergyPulseEngine(this.config);
+        } catch (e) {
+            console.warn('EnergyPulseEngine initialization failed, disabling pulses:', e.message);
+            this.config.enableEnergyPulses = false;
+            this.energyPulseEngine = null;
+        }
 
-        // Initialize animation engine
-        this.animationEngine = new AnimationPhaseEngine(this.config);
-        
-        // Initialize energy pulse engine
-        this.energyPulseEngine = new EnergyPulseEngine(this.config);
-        
-        // Initialize mystic symbols engine
-        this.mysticSymbolsEngine = new MysticSymbolsEngine(this.config);
-        
-        // Initialize detailed geometry engine for enhanced nodes & paths
-        this.detailedGeometryEngine = new DetailedGeometryEngine(this.config);
+        try {
+            this.mysticSymbolsEngine = new MysticSymbolsEngine(this.config);
+        } catch (e) {
+            console.warn('MysticSymbolsEngine initialization failed, disabling symbols:', e.message);
+            this.config.enableMysticSymbols = false;
+            this.mysticSymbolsEngine = null;
+        }
 
-        this.#generate();
+        try {
+            this.detailedGeometryEngine = new DetailedGeometryEngine(this.config);
+        } catch (e) {
+            console.warn('DetailedGeometryEngine initialization failed, disabling:', e.message);
+            this.config.enableDetailedGeometry = false;
+            this.detailedGeometryEngine = null;
+        }
     }
 
     /**
-     * Pre-generate animation frame data
-     * @private
+     * Get node positions for the Tree of Life geometry
+     * Implements required abstract method from PhaseAnimatedPolygonEffect
+     * @protected
+     * @returns {Array} Array of node objects with {x, y, id, color, glowColor}
      */
-    #generate() {
-        const width = this.finalSize?.width || 1024;
-        const height = this.finalSize?.height || 1024;
-        const progress = this.getProgress();
+    getNodePositions() {
+        return Object.values(SEPHIROTH_POSITIONS);
+    }
 
-        // Randomly select enum values (pick one option from arrays)
+    /**
+     * Get path connections for the Tree of Life geometry
+     * Implements required abstract method from PhaseAnimatedPolygonEffect
+     * @protected
+     * @returns {Array} Array of path objects with {start, end} node IDs
+     */
+    getPathConnections() {
+        return PATHS_CONNECTIONS;
+    }
+
+    /**
+     * Pre-generate hook: apply random enum selections and size scales
+     * Called once in base class constructor
+     * @protected
+     */
+    generate() {
+        // Apply random easing selections to config for deterministic variation
         const easingConfig = {
             awakeningEasing: AnimatedTreeOfLifeConfig.pickRandom(this.config.awakeningEasing),
             ascensionEasing: AnimatedTreeOfLifeConfig.pickRandom(this.config.ascensionEasing),
             radianceEasing: AnimatedTreeOfLifeConfig.pickRandom(this.config.radianceEasing),
             descentEasing: AnimatedTreeOfLifeConfig.pickRandom(this.config.descentEasing),
         };
-        
+
         // Get size scale multipliers
         const energyPulseSizeScale = this.config.energyPulseSizeScale || 1.0;
         const mysticSymbolSizeScale = this.config.mysticSymbolSizeScale || 1.0;
-        
-        // Apply random easing selections to config for this frame
-        const configWithRandomEnums = {
-            ...this.config,
-            ...easingConfig,
+
+        // Apply to config
+        Object.assign(this.config, easingConfig, {
             layerBlendMode: AnimatedTreeOfLifeConfig.pickRandom(this.config.layerBlendMode),
-            // Apply energy pulse size scale to pulse-related properties
             pulseSpiralRadius: (this.config.pulseSpiralRadius || 50) * energyPulseSizeScale,
             pulseAuraWidth: (this.config.pulseAuraWidth || 0.15) * energyPulseSizeScale,
-            // Apply mystical symbol size scale to symbol-related properties
             symbolGlowSize: (this.config.symbolGlowSize || 8) * mysticSymbolSizeScale,
-        };
-
-        // Synthesize frame-specific animation config
-        const frameConfig = this.animationEngine.synthesizeConfig(
-            configWithRandomEnums,
-            progress
-        );
-
-        // Store pre-generated animation frame data
-        this.data = {
-            width,
-            height,
-            progress,
-            frameNumber: this.frameNumber,
-            totalFrames: this.totalFrames,
-            frameConfig,
-            animationPhase: this.animationEngine.getPhase(progress),
-            layerOpacity: this.config.layerOpacity,
-            layerBlendMode: configWithRandomEnums.layerBlendMode,
-        };
+        });
     }
 
     /**
-     * Calculate progress (0 to 1, exclusive of 1.0 for perfect looping)
+     * Override rendering to inject Tree of Life-specific rendering
+     * @protected
+     * @param {Canvas2d} canvas - Render canvas
+     * @param {number} width - Canvas width
+     * @param {number} height - Canvas height
+     * @param {Object} frameConfig - Frame-specific configuration with smooth transitions
+     * @param {number} progress - Overall animation progress (0-1)
      */
-    getProgress() {
-        if (this.totalFrames <= 1) return 0;
-        return this.frameNumber / (this.totalFrames - 1);
+    async renderEffect(canvas, width, height, frameConfig, progress) {
+        // Reinitialize engines if lost in worker threads
+        this.#ensureEnginesInitialized();
+
+        // Extract colors from ColorPicker instances
+        const colors = this.#extractColors();
+
+        // Render the full Tree of Life animation
+        await this.#renderTreeOfLife(canvas, width, height, colors, frameConfig, progress);
+
+        // Log progress (useful for debugging)
+        const phase = this.getCurrentPhase(progress);
+        console.log('✅ Animated Tree of Life rendered - Phase:', phase, 'Progress:', progress.toFixed(3));
     }
 
     /**
-     * Main entry point for rendering
-     * Uses "invoke" method name as expected by my-nft-gen LayerEffect
+     * Ensure engines are initialized (handles worker thread loss)
+     * @private
      */
-    async invoke(layer, currentFrame, numberOfFrames) {
-
-
-        try {
-            // **CRITICAL**: Update frame tracking with the current render context
-            // This ensures animation progresses across the frame sequence
-            this.frameNumber = currentFrame ?? 0;
-            this.totalFrames = numberOfFrames ?? 1;
-
-            // Ensure engines exist (can be lost in worker threads)
-            if (!this.animationEngine || !this.animationEngine.synthesizeConfig) {
-                this.animationEngine = new AnimationPhaseEngine(this.config);
+    #ensureEnginesInitialized() {
+        if (!this.energyPulseEngine || !this.energyPulseEngine.getWavePulse) {
+            try {
+                this.energyPulseEngine = new EnergyPulseEngine(this.config);
+            } catch (e) {
+                console.warn('EnergyPulseEngine reinitialization failed:', e.message);
+                this.config.enableEnergyPulses = false;
             }
-            if (!this.energyPulseEngine || !this.energyPulseEngine.getWavePulse) {
-                try {
-                    this.energyPulseEngine = new EnergyPulseEngine(this.config);
-                } catch (e) {
-                    console.warn('Could not initialize EnergyPulseEngine, will disable pulses:', e.message);
-                    this.config.enableEnergyPulses = false;
-                }
-            }
-            if (!this.mysticSymbolsEngine || !this.mysticSymbolsEngine.getSymbol) {
-                try {
-                    this.mysticSymbolsEngine = new MysticSymbolsEngine(this.config);
-                } catch (e) {
-                    console.warn('Could not initialize MysticSymbolsEngine, will disable symbols:', e.message);
-                    this.config.enableMysticSymbols = false;
-                }
-            }
-            if (!this.detailedGeometryEngine || !this.detailedGeometryEngine.getNodeLayers) {
-                try {
-                    this.detailedGeometryEngine = new DetailedGeometryEngine(this.config);
-                } catch (e) {
-                    console.warn('Could not initialize DetailedGeometryEngine, will disable detailed geometry:', e.message);
-                    this.config.enableDetailedGeometry = false;
-                }
-            }
-
-            // Get canvas dimensions
-            const width = this.finalSize?.width || this.canvas?.width || 1024;
-            const height = this.finalSize?.height || this.canvas?.height || 1024;
-
-            // Calculate current progress AFTER updating frame data
-            const progress = this.getProgress();
-
-            // Synthesize frame-specific animation config with current progress
-            // Inline synthesis to avoid module loading issues in worker threads
-            const frameConfig = this.#synthesizeAnimationFrame(progress);
-
-            // Create a new canvas for rendering
-            const renderCanvas = await Canvas2dFactory.getNewCanvas(width, height);
-
-            // Extract colors from ColorPicker instances (CRITICAL: call getColor())
-            const colors = this.#extractColors();
-
-            // Render the tree of life structure with current frame config
-            await this.#renderTreeOfLife(renderCanvas, width, height, colors, frameConfig, progress);
-
-            // Convert the rendered canvas to a layer and composite it onto the main canvas
-            const renderedLayer = await renderCanvas.convertToLayer();
-            
-            // Apply layer opacity before compositing
-            const layerOpacity = this.config.layerOpacity || 1.0;
-            await renderedLayer.adjustLayerOpacity(layerOpacity);
-            
-            await layer.compositeLayerOver(renderedLayer);
-
-            console.log('✅ Animated Tree of Life effect rendered successfully');
-            const phase = this.#getPhaseForProgress(progress);
-            console.log('   Animation phase:', phase);
-            console.log('   Progress:', progress.toFixed(3));
-            console.log('   Frame:', this.frameNumber, '/', this.totalFrames);
-
-        } catch (error) {
-            console.error('Error invoking Animated Tree of Life effect:', error);
-            throw error;
         }
 
-        // Call parent's invoke first to set up the layer properly
-        await super.invoke(layer, currentFrame, numberOfFrames);
+        if (!this.mysticSymbolsEngine || !this.mysticSymbolsEngine.getSymbol) {
+            try {
+                this.mysticSymbolsEngine = new MysticSymbolsEngine(this.config);
+            } catch (e) {
+                console.warn('MysticSymbolsEngine reinitialization failed:', e.message);
+                this.config.enableMysticSymbols = false;
+            }
+        }
+
+        if (!this.detailedGeometryEngine || !this.detailedGeometryEngine.getNodeLayers) {
+            try {
+                this.detailedGeometryEngine = new DetailedGeometryEngine(this.config);
+            } catch (e) {
+                console.warn('DetailedGeometryEngine reinitialization failed:', e.message);
+                this.config.enableDetailedGeometry = false;
+            }
+        }
     }
 
     /**
      * Transform a normalized tree coordinate (0-1) to canvas coordinates with scale and centering
+     * Overrides base class method with Tree of Life-specific scaling
      * @private
      */
     #transformCoordinate(normalizedX, normalizedY, width, height) {
@@ -234,119 +210,6 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
             x: x * width,
             y: y * height
         };
-    }
-
-    /**
-     * Detect animation phase for a given progress value
-     * @private
-     */
-    #getPhaseForProgress(progress) {
-        const awakeStart = this.config.phaseAwakening_start || 0.0;
-        const ascStart = this.config.phaseAscension_start || 0.20;
-        const radStart = this.config.phaseRadiance_start || 0.60;
-        const descStart = this.config.phaseDescentstart || 0.85;
-        
-        if (progress < ascStart) return 'awakening';
-        if (progress < radStart) return 'ascension';
-        if (progress < descStart) return 'radiance';
-        return 'descent';
-    }
-
-    /**
-     * Synthesize animation frame config based on progress
-     * This inlines the synthesizeConfig logic to avoid module loading issues
-     * @private
-     */
-    #synthesizeAnimationFrame(progress) {
-        // Delegate to animationEngine if available, otherwise use fallback
-        if (this.animationEngine && typeof this.animationEngine.synthesizeConfig === 'function') {
-            return this.animationEngine.synthesizeConfig(this.config, progress);
-        }
-
-        // Fallback: inline the synthesis logic to ensure it works in all contexts
-        const baseConfig = this.config;
-        
-        // Determine phase
-        const phase = this.#getPhaseForProgress(progress);
-        
-        // Get phase boundaries
-        const awakeStart = baseConfig.phaseAwakening_start || 0.0;
-        const ascStart = baseConfig.phaseAscension_start || 0.20;
-        const radStart = baseConfig.phaseRadiance_start || 0.60;
-        const descStart = baseConfig.phaseDescentstart || 0.85;
-        const boundaries = {
-            awakening: [awakeStart, ascStart],
-            ascension: [ascStart, radStart],
-            radiance: [radStart, descStart],
-            descent: [descStart, 1.0]
-        };
-        
-        const [start, end] = boundaries[phase];
-        const phaseProgress = start === end ? 0 : (progress - start) / (end - start);
-        
-        // Get easing function name
-        const easingName = baseConfig[`${phase}Easing`] || 'linear';
-        
-        // Create frame config
-        const frameConfig = { ...baseConfig };
-        
-        // Interpolate node alpha
-        const alphaKey = `${phase}NodeAlpha`;
-        if (baseConfig[alphaKey] !== undefined) {
-            const from = baseConfig[`${phase}NodeAlpha_start`] || baseConfig[alphaKey];
-            const to = baseConfig[`${phase}NodeAlpha_end`] || baseConfig[alphaKey];
-            frameConfig.nodeAlpha = this.#lerp(from, to, phaseProgress, easingName);
-        }
-        
-        // Interpolate path intensity
-        const pathIntensityKey = `${phase}PathIntensity`;
-        if (baseConfig[pathIntensityKey] !== undefined) {
-            const from = baseConfig[`${phase}PathIntensity_start`] || baseConfig[pathIntensityKey];
-            const to = baseConfig[`${phase}PathIntensity_end`] || baseConfig[pathIntensityKey];
-            frameConfig.pathIntensity = this.#lerp(from, to, phaseProgress, easingName);
-        }
-        
-        // Path animation speed
-        frameConfig.pathAnimSpeed = baseConfig[`${phase}PathAnimSpeed`] || baseConfig.pathAnimSpeed || 1.0;
-        
-        // Kether glow
-        const ketherGlowKey = `${phase}KetherGlow`;
-        frameConfig.ketherGlow = baseConfig[ketherGlowKey] || 1.0;
-        
-        return frameConfig;
-    }
-
-    /**
-     * Linear interpolation with easing function lookup
-     * @private
-     */
-    #lerp(from, to, progress, easingName = 'linear') {
-        // Clamp progress
-        progress = Math.max(0, Math.min(1, progress));
-        
-        // Apply easing
-        const eased = this.#applyEasing(progress, easingName);
-        
-        // Interpolate
-        return from + (to - from) * eased;
-    }
-
-    /**
-     * Apply easing function
-     * @private
-     */
-    #applyEasing(progress, easingName) {
-        const easings = {
-            linear: (t) => t,
-            easeInCubic: (t) => t * t * t,
-            easeOutCubic: (t) => 1 - Math.pow(1 - t, 3),
-            easeInOutCubic: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
-            smoothstep: (t) => t * t * (3 - 2 * t),
-            easeOutQuart: (t) => 1 - Math.pow(1 - t, 4)
-        };
-        
-        const fn = easings[easingName] || easings.linear;
-        return fn(progress);
     }
 
     /**
@@ -387,8 +250,8 @@ export class AnimatedKabbalisticTreeKeyFrameEffect extends LayerEffect {
             const nodeGlowSize = this.config.nodeGlowSize || 25;
             const pathThickness = (this.config.pathThickness || 2) * (this.config.pathSizeScale || 1.0);
             
-            // Get current phase for animations
-            const phase = this.#getPhaseForProgress(progress);
+            // Get current phase for animations (from base class)
+            const phase = this.getCurrentPhase(progress);
 
             // ===== RENDER ATMOSPHERIC FUZZ LAYER =====
             // Add scattered energy particles for visual complexity

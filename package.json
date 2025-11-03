@@ -8,7 +8,8 @@
     ".": "./plugin.js"
   },
   "scripts": {
-    "render": "node scripts/testRender.js --help"
+    "render": "node scripts/testRender.js --help",
+    "render:charka": "node scripts/testRender.js --effect chakra-mandala --frames 400 --preset full-spectrum-resonance -v"
   },
   "dependencies": {
     "my-nft-gen": "1.6.9"
