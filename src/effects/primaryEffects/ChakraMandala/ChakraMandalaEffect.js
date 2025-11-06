@@ -58,6 +58,28 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
       frameNumber,
       totalFrames,
     });
+
+    // Storage for sine wave layers to be composited after main rendering
+    this.sineWaveLayers = [];
+  }
+
+  /**
+   * Override invoke to handle sine wave layers with proper opacity compositing
+   * @param {Layer} layer - Target rendering layer
+   * @param {number} currentFrame - Current frame number
+   * @param {number} numberOfFrames - Total number of frames
+   */
+  async invoke(layer, currentFrame, numberOfFrames) {
+    // Clear sine wave layers for this frame
+    this.sineWaveLayers = [];
+
+    // Call parent invoke (handles Canvas2D rendering)
+    await super.invoke(layer, currentFrame, numberOfFrames);
+
+    // Composite all sine wave layers on top with their opacity applied
+    for (const sineWaveLayer of this.sineWaveLayers) {
+      await layer.compositeLayerOver(sineWaveLayer);
+    }
   }
 
   /**
@@ -137,8 +159,11 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
       value: (this.config.sineWaveThicknessRaw || 2.5) * scale,
       writable: true, enumerable: true, configurable: true
     });
+    // sineWaveAmplitude is in pixels (e.g., 15 pixels)
+    // It will be normalized to 0-1 space in the engine using actual canvas width
+    // This ensures correct alignment across all canvas sizes and scales
     Object.defineProperty(this.config, 'sineWaveAmplitudeComputed', {
-      value: (this.config.sineWaveAmplitudeRaw || 15) * scale,
+      value: this.config.sineWaveAmplitudeRaw || 15,  // Keep in pixel units
       writable: true, enumerable: true, configurable: true
     });
     Object.defineProperty(this.config, 'energyBeadRadiusComputed', {
@@ -301,7 +326,7 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
     await this.#renderChakras(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo);
     await this.#renderChakraBreathing(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo);
     await this.#renderFrequencyVisualization(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo);
-    await this.#renderVerticalSineWaves(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo);
+    await this.#renderVerticalSineWaves(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo, width, height);
     await this.#renderEnergyBeads(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo);
   }
 
@@ -984,10 +1009,10 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
 
   /**
    * Render vertical oscillating sine waves between chakra points
-   * Uses layered drawing approach: fuzz layer first, then sharp layer on top
+   * Uses efficient polyline rendering with opacity control
    * @private
    */
-  async #renderVerticalSineWaves(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo) {
+  async #renderVerticalSineWaves(canvas, centerX, centerY, scale, frameConfig, progress, transitionInfo, width, height) {
     if (!this.config.enableVerticalSineWaves) return;
 
     const chakras = Object.values(CHAKRA_POSITIONS);
@@ -1003,7 +1028,8 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
       this.config,
       chakras,
       this.totalFrames,
-      this.frameNumber
+      this.frameNumber,
+      width  // Pass actual canvas width for proper amplitude normalization
     );
 
     // Extract colors (handle both strings and ColorPicker objects)
@@ -1022,7 +1048,7 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
       const finalOpacity = wave.opacity * frameConfig.nodeAlpha;
       const fuzzLayerOpacity = finalOpacity * this.config.sineWaveFuzzLayerOpacity;
 
-      // Helper function to render a layer
+      // Helper function to render sine wave path
       const renderLayer = async (isFuzz) => {
         const color = isFuzz ? fuzzColor : baseColor;
         const opacity = isFuzz ? fuzzLayerOpacity : finalOpacity;
@@ -1030,15 +1056,26 @@ export class ChakraMandalaEffect extends PhaseAnimatedPolygonEffect {
           ? this.config.sineWaveThicknessComputed + wave.accent * 1.5  // Thicker for halo
           : this.config.sineWaveThicknessComputed;  // Normal thickness
 
-        // Render entire path as single polyline (more efficient than individual segments)
-        await canvas.drawPath(
+        // Create separate canvas for this path layer using actual canvas dimensions
+        const pathCanvas = await Canvas2dFactory.getNewCanvas(width, height);
+        
+        // Draw the entire path as polyline
+        await pathCanvas.drawPath(
           pathPoints,
-          thickness,
-          color,
-          0,  // No outer stroke
-          null,
-          opacity  // Pass opacity if supported by drawPath
+          thickness,      // innerStroke
+          color,          // innerColor
+          0,              // outerStroke (none)
+          null            // outerColor (none)
         );
+
+        // Convert vector drawing to raster layer
+        const pathLayer = await pathCanvas.convertToLayer();
+        
+        // Apply opacity adjustment on the layer
+        await pathLayer.adjustLayerOpacity(opacity);
+        
+        // Store layer for compositing after main canvas rendering
+        this.sineWaveLayers.push(pathLayer);
       };
 
       // Render layers in appropriate order based on invert flag

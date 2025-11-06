@@ -29,38 +29,42 @@ export class VerticalSineWaveEngine {
 
   /**
    * Calculate vertical sine wave groups from chakra array
+   * UPDATED: Now supports wrapping to generate unlimited waves via cycling
    * @param {Array} chakras - Array of chakra position objects
-   * @param {string} progression - 'sequential' or 'overlapping'
+   * @param {string} progression - 'sequential' or 'overlapping' (wraps when needed for more waves)
    * @param {number} grouping - Points per sine wave (3, 4, 5)
+   * @param {number} maxWaves - (optional) Maximum waves to generate. null = all natural groups
    * @returns {Array} Array of sine wave group objects
    */
-  static generateSineWaveGroups(chakras, progression = 'sequential', grouping = 3) {
+  static generateSineWaveGroups(chakras, progression = 'sequential', grouping = 3, maxWaves = null) {
     const groups = [];
     
     if (progression === 'sequential') {
-      // Non-overlapping: 0-1-2, 3-4-5, etc.
-      for (let i = 0; i < chakras.length; i += grouping) {
+      // Non-overlapping sequential: 0-1-2, 3-4-5, 6-0-1 (wraps), etc.
+      // With wrapping, can generate unlimited waves
+      const targetCount = maxWaves || Math.ceil(chakras.length / grouping);
+      for (let wave = 0; wave < targetCount; wave++) {
+        const groupIndices = [];
+        for (let j = 0; j < grouping; j++) {
+          const idx = (wave * grouping + j) % chakras.length;
+          groupIndices.push(idx);
+        }
+        
+        groups.push({
+          groupIndex: groups.length,
+          chakraIndices: groupIndices,
+          chakras: groupIndices.map(idx => chakras[idx]),
+        });
+      }
+    } else if (progression === 'overlapping') {
+      // Rolling window with wrapping: 0-1-2, 1-2-3, ..., N-1-0-1, etc.
+      // Can cycle through to generate unlimited waves
+      const targetCount = maxWaves || chakras.length;
+      for (let i = 0; i < targetCount; i++) {
         const groupIndices = [];
         for (let j = 0; j < grouping; j++) {
           const idx = (i + j) % chakras.length;
           groupIndices.push(idx);
-        }
-        
-        // Only create group if we have enough unique points
-        if (new Set(groupIndices).size === grouping) {
-          groups.push({
-            groupIndex: groups.length,
-            chakraIndices: groupIndices,
-            chakras: groupIndices.map(idx => chakras[idx]),
-          });
-        }
-      }
-    } else if (progression === 'overlapping') {
-      // Rolling window: 0-1-2, 1-2-3, 2-3-4, etc.
-      for (let i = 0; i < chakras.length - grouping + 1; i++) {
-        const groupIndices = [];
-        for (let j = 0; j < grouping; j++) {
-          groupIndices.push(i + j);
         }
         
         groups.push({
@@ -76,17 +80,19 @@ export class VerticalSineWaveEngine {
 
   /**
    * Calculate a smooth sine wave path between chakra endpoints
-   * Uses hermite interpolation for smooth curves between 3+ points
+   * Endpoints and control points (chakra centers) stay fixed
+   * Oscillation is modulated to be zero at control points and maximum between them
    * 
    * @param {Array} groupChakras - Array of 3+ chakra objects (start, mid, end)
-   * @param {number} amplitude - Horizontal oscillation distance (pixels)
+   * @param {number} amplitude - Horizontal oscillation distance in pixels (e.g., 15)
    * @param {number} frequency - Oscillations per wave cycle
    * @param {number} progress - Animation progress (0-1) for phase calculation
    * @param {number} totalFrames - Total frames in animation
    * @param {number} currentFrame - Current frame number
+   * @param {number} canvasWidth - Canvas width for amplitude normalization (e.g., 1024, 1920, 1080)
    * @returns {Array} Array of path point objects { x, y, chakraIndex }
    */
-  static calculateSineWavePath(groupChakras, amplitude, frequency, progress, totalFrames, currentFrame) {
+  static calculateSineWavePath(groupChakras, amplitude, frequency, progress, totalFrames, currentFrame, canvasWidth = 1024) {
     if (groupChakras.length < 3) {
       throw new Error('VerticalSineWaveEngine requires minimum 3 chakra points');
     }
@@ -96,14 +102,27 @@ export class VerticalSineWaveEngine {
     const numIntervals = groupChakras.length - 1;
     const totalSegments = numIntervals * resolution;
 
-    // Extract Y-coordinates for vertical span
+    // Extract coordinates for vertical span and base x positions
     const startY = groupChakras[0].y;
     const endY = groupChakras[groupChakras.length - 1].y;
-    const ySpan = Math.abs(endY - startY);
 
     // Calculate oscillation phase: ensures symmetry (frame 0 ≈ frame N-1)
     const normalizedProgress = currentFrame / totalFrames;
     const oscillationPhase = normalizedProgress * Math.PI * 2 * frequency;
+
+    // Convert amplitude from pixels to normalized 0-1 space
+    // Amplitude is in pixels (e.g., 15), canvas width can vary (1024, 1920, 1080, etc.)
+    // Normalized = pixelAmplitude / canvasWidth
+    // Example for 1024px canvas:
+    //   - 8 pixels / 1024 = 0.00586 normalized
+    //   - At render: 0.00586 × 512 × 2 = 6 pixels ✓
+    // Example for 1920px canvas:
+    //   - 8 pixels / 1920 = 0.00417 normalized
+    //   - At render: 0.00417 × 672 × 2 ≈ 5.6 pixels (proportionally correct)
+    // Example for 1080px portrait canvas:
+    //   - 8 pixels / 1080 = 0.0074 normalized
+    //   - At render: 0.0074 × 378 × 2 ≈ 5.6 pixels (proportionally correct)
+    const normalizedAmplitude = amplitude / canvasWidth;
 
     // Generate path points
     for (let segment = 0; segment <= totalSegments; segment++) {
@@ -112,12 +131,20 @@ export class VerticalSineWaveEngine {
       // Vertical position: lerp from start to end
       const y = startY + (endY - startY) * t;
 
-      // Horizontal oscillation: sine wave with configurable amplitude
-      const sineValue = Math.sin(oscillationPhase + t * Math.PI * 2 * frequency);
-      const xOffset = sineValue * amplitude;
+      // Horizontal base position: interpolate through control points (chakra x-positions)
+      // This ensures start/end/mid points stay at their chakra centers
+      const baseX = this.#interpolateControlPointX(groupChakras, t);
 
-      // Smooth x-coordinate (typically centered on chakra vertical line)
-      const x = 0.5 + xOffset / 1000; // Normalized coordinate space (0-1)
+      // Calculate oscillation envelope: zero at control points, maximum between them
+      // This modulates the sine wave to fade in/out at chakra centers
+      const oscillationEnvelope = this.#calculateOscillationEnvelope(groupChakras, t);
+
+      // Horizontal oscillation: sine wave with configurable amplitude, modulated by envelope
+      const sineValue = Math.sin(oscillationPhase + t * Math.PI * 2 * frequency);
+      const xOffset = sineValue * normalizedAmplitude * oscillationEnvelope;
+
+      // Final x-coordinate: base position plus oscillation
+      const x = baseX + xOffset;
 
       pathPoints.push({
         x,
@@ -128,6 +155,62 @@ export class VerticalSineWaveEngine {
     }
 
     return pathPoints;
+  }
+
+  /**
+   * Interpolate x-position through chakra control points
+   * Ensures intermediate points pass through mid-wave chakras
+   * @private
+   * @param {Array} groupChakras - Chakra control points
+   * @param {number} t - Progress through wave (0-1)
+   * @returns {number} Interpolated x-position (normalized)
+   */
+  static #interpolateControlPointX(groupChakras, t) {
+    const numChakras = groupChakras.length;
+    
+    // Determine which interval we're in
+    const intervalSize = 1 / (numChakras - 1);
+    let interval = Math.floor(t / intervalSize);
+    interval = Math.min(interval, numChakras - 2); // Clamp to valid interval
+    
+    const nextInterval = interval + 1;
+    const localT = (t - interval * intervalSize) / intervalSize; // 0-1 within interval
+    
+    // Linear interpolation between chakra x-positions
+    const x1 = groupChakras[interval].x;
+    const x2 = groupChakras[nextInterval].x;
+    return x1 + (x2 - x1) * localT;
+  }
+
+  /**
+   * Calculate oscillation envelope function
+   * Returns 0 at chakra control points, 1.0 at midpoints between them
+   * Creates smooth fade in/out of oscillation near control points
+   * @private
+   * @param {Array} groupChakras - Chakra control points
+   * @param {number} t - Progress through wave (0-1)
+   * @returns {number} Envelope value (0-1)
+   */
+  static #calculateOscillationEnvelope(groupChakras, t) {
+    const numChakras = groupChakras.length;
+    const intervalSize = 1 / (numChakras - 1);
+    
+    // Find closest control point
+    let closestDist = Infinity;
+    for (let i = 0; i < numChakras; i++) {
+      const controlPointT = i * intervalSize;
+      const dist = Math.abs(t - controlPointT);
+      closestDist = Math.min(closestDist, dist);
+    }
+    
+    // At control points (dist ≈ 0), envelope = 0
+    // At midpoint between controls (dist ≈ intervalSize/2), envelope = 1
+    // Use quadratic easing for smooth fade
+    const fadeDist = intervalSize / 2;
+    const normalized = Math.min(closestDist / fadeDist, 1.0);
+    
+    // Quadratic: x^2 gives smooth fade from 0 to 1
+    return normalized * normalized * (3 - 2 * normalized); // Smoothstep for nice curve
   }
 
   /**
@@ -231,24 +314,25 @@ export class VerticalSineWaveEngine {
    * @param {Array} chakras - Array of chakra position objects
    * @param {number} totalFrames - Total animation frames
    * @param {number} currentFrame - Current frame number
+   * @param {number} canvasWidth - Canvas width for amplitude normalization (e.g., 1024, 1920, 1080)
    * @returns {Array} Array of wave group objects with computed paths
    */
-  static generateRenderableSineWaves(config, chakras, totalFrames, currentFrame) {
+  static generateRenderableSineWaves(config, chakras, totalFrames, currentFrame, canvasWidth = 1024) {
     if (!config.enableVerticalSineWaves) {
       return [];
     }
 
+    // Generate groups with wrapping support - pass maxWaves to respect sineWaveCount
+    // Now supports unlimited waves via cycling through chakras
     const groups = this.generateSineWaveGroups(
       chakras,
       config.sineWaveProgression,
-      config.sineWaveChakraGrouping
+      config.sineWaveChakraGrouping,
+      config.sineWaveCount  // Pass maxWaves to generate requested count with wrapping
     );
 
-    // Filter by wave count if specified (null = all waves)
-    let wavesToRender = groups;
-    if (config.sineWaveCount !== null && config.sineWaveCount > 0) {
-      wavesToRender = groups.slice(0, Math.min(config.sineWaveCount, groups.length));
-    }
+    // All requested waves are now generated with wrapping
+    const wavesToRender = groups;
 
     const renderableWaves = wavesToRender.map((group, waveIndex) => {
       // Get harmonic ratio for this wave (cycles through ratios if more waves than ratios)
@@ -280,7 +364,8 @@ export class VerticalSineWaveEngine {
         harmonicFrequency,
         currentFrame / totalFrames,
         totalFrames,
-        currentFrame
+        currentFrame,
+        canvasWidth  // Pass actual canvas width for proper normalization
       );
 
       const opacity = this.calculateOscillationValue(
